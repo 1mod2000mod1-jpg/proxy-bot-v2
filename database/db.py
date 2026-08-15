@@ -1,25 +1,32 @@
-import csv
 import os
 import sqlite3
 
 
 class Database:
 
-    def __init__(self, path):
+    def __init__(
+        self,
+        path: str
+    ):
 
         self.path = path
 
-        parent = os.path.dirname(path)
+        parent = os.path.dirname(
+            path
+        )
 
         if parent:
+
             os.makedirs(
                 parent,
                 exist_ok=True
             )
 
     def connection(self):
+
         conn = sqlite3.connect(
-            self.path
+            self.path,
+            timeout=30
         )
 
         conn.row_factory = sqlite3.Row
@@ -34,7 +41,7 @@ class Database:
                 """
                 CREATE TABLE IF NOT EXISTS proxies (
                     proxy TEXT PRIMARY KEY,
-                    protocol TEXT,
+                    protocol TEXT DEFAULT 'unknown',
                     alive INTEGER DEFAULT 0,
                     latency INTEGER DEFAULT 0,
                     first_seen TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -52,32 +59,129 @@ class Database:
                 """
             )
 
-    def add_many(self, proxies):
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS
+                idx_proxies_alive
+                ON proxies(alive)
+                """
+            )
 
-        if not proxies:
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS
+                idx_proxies_protocol
+                ON proxies(protocol)
+                """
+            )
+
+    def sources(self):
+
+        with self.connection() as conn:
+
+            rows = conn.execute(
+                """
+                SELECT url
+                FROM sources
+                ORDER BY rowid ASC
+                """
+            ).fetchall()
+
+        return [
+            row["url"]
+            for row in rows
+        ]
+
+    def count(self):
+
+        with self.connection() as conn:
+
+            return conn.execute(
+                """
+                SELECT COUNT(*)
+                FROM proxies
+                """
+            ).fetchone()[0]
+
+    def add_many(
+        self,
+        items
+    ):
+
+        if not items:
             return
 
         with self.connection() as conn:
 
-            conn.executemany(
-                """
-                INSERT INTO proxies(proxy)
-                VALUES(?)
-                ON CONFLICT(proxy)
-                DO UPDATE SET
-                    last_seen=CURRENT_TIMESTAMP
-                """,
-                [
+            for proxy, protocol in items:
+
+                existing = conn.execute(
+                    """
+                    SELECT protocol
+                    FROM proxies
+                    WHERE proxy=?
+                    """,
                     (proxy,)
-                    for proxy in proxies
-                ]
-            )
+                ).fetchone()
+
+                if existing is None:
+
+                    conn.execute(
+                        """
+                        INSERT INTO proxies(
+                            proxy,
+                            protocol,
+                            last_seen
+                        )
+                        VALUES(
+                            ?,
+                            ?,
+                            CURRENT_TIMESTAMP
+                        )
+                        """,
+                        (
+                            proxy,
+                            protocol
+                        )
+                    )
+
+                else:
+
+                    old_protocol = (
+                        existing["protocol"]
+                        or "unknown"
+                    )
+
+                    new_protocol = protocol
+
+                    if (
+                        old_protocol == "unknown"
+                        and new_protocol != "unknown"
+                    ):
+                        final_protocol = new_protocol
+                    else:
+                        final_protocol = old_protocol
+
+                    conn.execute(
+                        """
+                        UPDATE proxies
+                        SET
+                            protocol=?,
+                            last_seen=CURRENT_TIMESTAMP
+                        WHERE proxy=?
+                        """,
+                        (
+                            final_protocol,
+                            proxy
+                        )
+                    )
 
     def update_check(
         self,
-        proxy,
-        alive,
-        latency
+        proxy: str,
+        alive: bool,
+        latency: int,
+        protocol: str
     ):
 
         with self.connection() as conn:
@@ -85,26 +189,22 @@ class Database:
             conn.execute(
                 """
                 UPDATE proxies
+
                 SET
                     alive=?,
                     latency=?,
+                    protocol=?,
                     last_checked=CURRENT_TIMESTAMP
+
                 WHERE proxy=?
                 """,
                 (
                     int(alive),
-                    latency,
+                    int(latency),
+                    protocol,
                     proxy
                 )
             )
-
-    def count(self):
-
-        with self.connection() as conn:
-
-            return conn.execute(
-                "SELECT COUNT(*) FROM proxies"
-            ).fetchone()[0]
 
     def all_proxies(self):
 
@@ -114,14 +214,14 @@ class Database:
                 """
                 SELECT *
                 FROM proxies
-                ORDER BY last_seen DESC
+                ORDER BY alive DESC, latency ASC
                 """
             ).fetchall()
 
     def page(
         self,
-        offset,
-        limit
+        offset: int,
+        limit: int
     ):
 
         with self.connection() as conn:
@@ -130,7 +230,15 @@ class Database:
                 """
                 SELECT *
                 FROM proxies
-                ORDER BY alive DESC, latency ASC
+
+                ORDER BY
+                    alive DESC,
+                    CASE
+                        WHEN latency <= 0 THEN 999999
+                        ELSE latency
+                    END ASC,
+                    last_seen DESC
+
                 LIMIT ? OFFSET ?
                 """,
                 (
@@ -144,7 +252,10 @@ class Database:
         with self.connection() as conn:
 
             total = conn.execute(
-                "SELECT COUNT(*) FROM proxies"
+                """
+                SELECT COUNT(*)
+                FROM proxies
+                """
             ).fetchone()[0]
 
             alive = conn.execute(
@@ -155,7 +266,9 @@ class Database:
                 """
             ).fetchone()[0]
 
-            dead = total - alive
+            dead = (
+                total - alive
+            )
 
             filtered = conn.execute(
                 """
@@ -180,43 +293,6 @@ class Database:
             "last_update": last_update
         }
 
-    def sources(self):
-
-        with self.connection() as conn:
-
-            return [
-                row[0]
-                for row in conn.execute(
-                    "SELECT url FROM sources"
-                )
-            ]
-
-    def load_sources_from_env(self):
-
-        raw = os.getenv(
-            "PROXY_SOURCE_URLS",
-            ""
-        )
-
-        urls = [
-            x.strip()
-            for x in raw.splitlines()
-            if x.strip()
-        ]
-
-        with self.connection() as conn:
-
-            conn.executemany(
-                """
-                INSERT OR IGNORE INTO sources(url)
-                VALUES(?)
-                """,
-                [
-                    (url,)
-                    for url in urls
-                ]
-            )
-
     def clear(self):
 
         with self.connection() as conn:
@@ -225,7 +301,10 @@ class Database:
                 "DELETE FROM proxies"
             )
 
-    def export_txt(self, path):
+    def export_txt(
+        self,
+        path: str
+    ):
 
         rows = self.all_proxies()
 
@@ -237,49 +316,11 @@ class Database:
 
             for row in rows:
 
-                file.write(
-                    row["proxy"] + "\n"
-                )
+                if row["alive"]:
 
-        return path
-
-    def export_csv(self, path):
-
-        rows = self.all_proxies()
-
-        with open(
-            path,
-            "w",
-            newline="",
-            encoding="utf-8"
-        ) as file:
-
-            writer = csv.writer(file)
-
-            writer.writerow(
-                [
-                    "proxy",
-                    "protocol",
-                    "alive",
-                    "latency",
-                    "first_seen",
-                    "last_seen",
-                    "last_checked"
-                ]
-            )
-
-            for row in rows:
-
-                writer.writerow(
-                    [
-                        row["proxy"],
-                        row["protocol"],
-                        row["alive"],
-                        row["latency"],
-                        row["first_seen"],
-                        row["last_seen"],
-                        row["last_checked"]
-                    ]
-                )
+                    file.write(
+                        row["proxy"]
+                        + "\n"
+                    )
 
         return path
