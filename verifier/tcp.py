@@ -1,40 +1,37 @@
 import asyncio
+import os
+import time
 
 
-TIMEOUT = float(
-    __import__("os").getenv(
-        "CHECK_TIMEOUT",
-        "5"
-    )
-)
+TIMEOUT = float(os.getenv("CHECK_TIMEOUT", "5"))
 
 
-async def check_tcp(
-    host: str,
-    port: int
-) -> bool:
+async def check_tcp(host: str, port: int):
+    """
+    فحص TCP فقط.
+    يستخدم كمرحلة أولية سريعة قبل فحص HTTP Proxy.
+    """
 
     writer = None
+    started = time.perf_counter()
 
     try:
-
-        reader, writer = await asyncio.wait_for(
-            asyncio.open_connection(
-                host,
-                port
-            ),
+        _, writer = await asyncio.wait_for(
+            asyncio.open_connection(host, port),
             timeout=TIMEOUT
         )
 
-        return True
+        latency = round(
+            (time.perf_counter() - started) * 1000
+        )
+
+        return True, latency
 
     except Exception:
-        return False
+        return False, 0
 
     finally:
-
-        if writer is not None:
-
+        if writer:
             writer.close()
 
             try:
