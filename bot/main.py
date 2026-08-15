@@ -1,5 +1,6 @@
 import asyncio
 import os
+import time
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.client.default import DefaultBotProperties
@@ -7,15 +8,16 @@ from aiogram.enums import ParseMode
 from aiogram.filters import CommandStart
 from aiogram.types import CallbackQuery, Message, FSInputFile
 
-from database.db import Database
-from collector.manager import CollectorManager
-from verifier.manager import VerifierManager
 from bot.keyboards import (
     main_keyboard,
     sources_keyboard,
     scan_keyboard,
     page_keyboard,
 )
+
+from collector.manager import CollectorManager
+from database.db import Database
+from verifier.manager import VerifierManager
 
 
 # ============================================================
@@ -51,7 +53,7 @@ dp = Dispatcher()
 
 
 # ============================================================
-# DATABASE / MANAGERS
+# DATABASE
 # ============================================================
 
 db = Database(DB_PATH)
@@ -69,25 +71,21 @@ def is_admin(user_id: int) -> bool:
     return user_id in ADMIN_IDS
 
 
-def denied_text() -> str:
+def denied():
     return (
         "⛔ <b>غير مصرح</b>\n\n"
         "ليس لديك صلاحية استخدام هذا البوت."
     )
 
 
-def sources_from_env():
-    """
-    قراءة PROXY_SOURCE_URLS مباشرة من Railway.
-    كل رابط في سطر مستقل.
-    """
+def get_sources_from_env():
 
     raw = os.getenv(
         "PROXY_SOURCE_URLS",
         ""
     )
 
-    sources = []
+    result = []
 
     for line in raw.splitlines():
 
@@ -102,18 +100,15 @@ def sources_from_env():
         ):
             continue
 
-        if url not in sources:
-            sources.append(url)
+        if url not in result:
+            result.append(url)
 
-    return sources
+    return result
 
 
 def reload_sources():
-    """
-    تحديث جدول المصادر من متغير Railway.
-    """
 
-    sources = sources_from_env()
+    sources = get_sources_from_env()
 
     with db.connection() as conn:
 
@@ -142,34 +137,28 @@ def reload_sources():
 @dp.message(CommandStart())
 async def start(message: Message):
 
-    if not is_admin(
-        message.from_user.id
-    ):
-        await message.answer(
-            denied_text()
-        )
+    if not is_admin(message.from_user.id):
+        await message.answer(denied())
         return
 
     reload_sources()
 
     await message.answer(
-        "🚀 <b>PROXPMOY V3</b>\n\n"
-        "نظام جمع وإدارة وفحص البروكسيات العامة.\n\n"
-        "اختر العملية:",
+        "🚀 <b>PROXPMOY V4</b>\n\n"
+        "نظام جمع وفحص وإدارة البروكسيات.\n\n"
+        "اختر من الأزرار:",
         reply_markup=main_keyboard()
     )
 
 
 # ============================================================
-# MAIN MENU
+# MENU
 # ============================================================
 
 @dp.callback_query(F.data == "menu")
 async def menu(callback: CallbackQuery):
 
-    if not is_admin(
-        callback.from_user.id
-    ):
+    if not is_admin(callback.from_user.id):
         await callback.answer(
             "غير مصرح",
             show_alert=True
@@ -179,9 +168,63 @@ async def menu(callback: CallbackQuery):
     reload_sources()
 
     await callback.message.edit_text(
-        "🚀 <b>PROXPMOY V3</b>\n\n"
-        "اختر العملية:",
+        "🚀 <b>PROXPMOY V4</b>\n\n"
+        "اختر من الأزرار:",
         reply_markup=main_keyboard()
+    )
+
+    await callback.answer()
+
+
+# ============================================================
+# SOURCES
+# ============================================================
+
+@dp.callback_query(F.data == "sources")
+async def show_sources(callback: CallbackQuery):
+
+    if not is_admin(callback.from_user.id):
+        await callback.answer(
+            "غير مصرح",
+            show_alert=True
+        )
+        return
+
+    sources = reload_sources()
+
+    if not sources:
+
+        text = (
+            "🌐 <b>المصادر</b>\n\n"
+            "❌ لا توجد مصادر."
+        )
+
+    else:
+
+        text = (
+            "🌐 <b>المصادر</b>\n\n"
+            f"📊 العدد: <code>{len(sources)}</code>\n\n"
+        )
+
+        for index, source in enumerate(
+            sources,
+            1
+        ):
+
+            line = (
+                f"<b>{index}</b>. "
+                f"<code>{source}</code>\n"
+            )
+
+            if len(text) + len(line) > 3900:
+                text += "\n... والمزيد موجود في Railway."
+                break
+
+            text += line
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=sources_keyboard()
     )
 
     await callback.answer()
@@ -194,41 +237,47 @@ async def menu(callback: CallbackQuery):
 @dp.callback_query(F.data == "collect")
 async def collect(callback: CallbackQuery):
 
-    if not is_admin(
-        callback.from_user.id
-    ):
+    if not is_admin(callback.from_user.id):
         await callback.answer(
             "غير مصرح",
             show_alert=True
         )
         return
 
-    # مهم:
-    # إعادة قراءة PROXY_SOURCE_URLS من Railway
+    # نرد فورًا على callback حتى لا يصبح قديمًا
+    await callback.answer(
+        "🔎 بدأ الجمع..."
+    )
+
     sources = reload_sources()
 
     if not sources:
 
         await callback.message.edit_text(
             "⚠️ <b>لا توجد مصادر</b>\n\n"
-            "متغير <code>PROXY_SOURCE_URLS</code> "
-            "فارغ أو لم يتم تحميله.",
+            "أضف PROXY_SOURCE_URLS في Railway.",
             reply_markup=main_keyboard()
         )
 
-        await callback.answer()
         return
 
     await callback.message.edit_text(
-        "🔎 <b>جاري جمع البروكسيات...</b>\n\n"
-        f"🌐 عدد المصادر: <code>{len(sources)}</code>\n\n"
-        "يرجى الانتظار...",
+        "🔎 <b>جاري الجمع...</b>\n\n"
+        f"🌐 المصادر: <code>{len(sources)}</code>\n\n"
+        "يرجى الانتظار.",
         reply_markup=sources_keyboard()
     )
+
+    started = time.perf_counter()
 
     try:
 
         result = await collector.collect()
+
+        elapsed = (
+            time.perf_counter()
+            - started
+        )
 
         await callback.message.edit_text(
             "✅ <b>انتهى الجمع</b>\n\n"
@@ -236,83 +285,18 @@ async def collect(callback: CallbackQuery):
             f"📥 المكتشف: <code>{result.discovered}</code>\n"
             f"🆕 الجديد: <code>{result.new}</code>\n"
             f"♻️ المكرر: <code>{result.duplicates}</code>\n"
-            f"❌ المصادر الفاشلة: <code>{result.failed_sources}</code>",
+            f"❌ الفاشل: <code>{result.failed_sources}</code>\n"
+            f"⏱ الزمن: <code>{elapsed:.1f}s</code>",
             reply_markup=main_keyboard()
         )
 
-    except Exception as error:
+    except Exception as exc:
 
         await callback.message.edit_text(
-            "❌ <b>حدث خطأ أثناء الجمع</b>\n\n"
-            f"<code>{str(error)[:1000]}</code>",
+            "❌ <b>فشل الجمع</b>\n\n"
+            f"<code>{str(exc)[:1500]}</code>",
             reply_markup=main_keyboard()
         )
-
-    await callback.answer()
-
-
-# ============================================================
-# SOURCES
-# ============================================================
-
-@dp.callback_query(F.data == "sources")
-async def sources(callback: CallbackQuery):
-
-    if not is_admin(
-        callback.from_user.id
-    ):
-        await callback.answer(
-            "غير مصرح",
-            show_alert=True
-        )
-        return
-
-    # قراءة Railway مباشرة
-    source_list = reload_sources()
-
-    if not source_list:
-
-        text = (
-            "🌐 <b>مصادر البروكسيات</b>\n\n"
-            "❌ لا توجد مصادر حاليًا.\n\n"
-            "تأكد من أن متغير:\n"
-            "<code>PROXY_SOURCE_URLS</code>\n"
-            "موجود في Railway."
-        )
-
-    else:
-
-        text = (
-            "🌐 <b>مصادر البروكسيات</b>\n\n"
-            f"📊 العدد: <code>{len(source_list)}</code>\n\n"
-        )
-
-        for index, url in enumerate(
-            source_list,
-            start=1
-        ):
-
-            # Telegram لديه حد لطول الرسالة،
-            # لذلك نعرض الرابط كاملًا لكن نحمي الرسالة.
-            text += (
-                f"<b>{index}.</b> "
-                f"<code>{url}</code>\n\n"
-            )
-
-            if len(text) > 3800:
-
-                text += (
-                    "\n... والمزيد من المصادر موجودة."
-                )
-
-                break
-
-    await callback.message.edit_text(
-        text,
-        reply_markup=sources_keyboard()
-    )
-
-    await callback.answer()
 
 
 # ============================================================
@@ -320,11 +304,9 @@ async def sources(callback: CallbackQuery):
 # ============================================================
 
 @dp.callback_query(F.data == "scan")
-async def scan(callback: CallbackQuery):
+async def scan_menu(callback: CallbackQuery):
 
-    if not is_admin(
-        callback.from_user.id
-    ):
+    if not is_admin(callback.from_user.id):
         await callback.answer(
             "غير مصرح",
             show_alert=True
@@ -333,15 +315,14 @@ async def scan(callback: CallbackQuery):
 
     total = db.count()
 
+    await callback.answer()
+
     await callback.message.edit_text(
         "⚡ <b>فحص البروكسيات</b>\n\n"
-        f"📦 الموجود في قاعدة البيانات: "
-        f"<code>{total}</code>\n\n"
+        f"📦 الإجمالي: <code>{total}</code>\n\n"
         "اختر نوع الفحص:",
         reply_markup=scan_keyboard()
     )
-
-    await callback.answer()
 
 
 # ============================================================
@@ -351,32 +332,47 @@ async def scan(callback: CallbackQuery):
 @dp.callback_query(F.data == "scan_all")
 async def scan_all(callback: CallbackQuery):
 
-    if not is_admin(
-        callback.from_user.id
-    ):
+    if not is_admin(callback.from_user.id):
         await callback.answer(
             "غير مصرح",
             show_alert=True
         )
         return
 
+    # مهم جدًا:
+    # الرد على callback قبل بدء العملية الطويلة
+    await callback.answer(
+        "⚡ بدأ الفحص..."
+    )
+
     total = db.count()
 
     if total == 0:
 
         await callback.message.edit_text(
-            "⚠️ <b>لا توجد بروكسيات للفحص</b>\n\n"
+            "⚠️ <b>لا توجد بروكسيات</b>\n\n"
             "اضغط «🔎 جمع البروكسيات» أولًا.",
             reply_markup=main_keyboard()
         )
 
-        await callback.answer()
+        return
+
+    if verifier.running:
+
+        await callback.message.edit_text(
+            "⏳ <b>يوجد فحص جارٍ بالفعل.</b>\n\n"
+            "انتظر حتى ينتهي الفحص الحالي.",
+            reply_markup=main_keyboard()
+        )
+
         return
 
     await callback.message.edit_text(
-        "⚡ <b>بدأ الفحص</b>\n\n"
-        f"📦 العدد: <code>{total}</code>\n\n"
-        "جاري الفحص..."
+        "⚡ <b>الفحص بدأ</b>\n\n"
+        f"📦 العدد: <code>{total}</code>\n"
+        "🔎 HTTP / HTTPS / SOCKS4 / SOCKS5\n\n"
+        "جاري الفحص...",
+        reply_markup=main_keyboard()
     )
 
     try:
@@ -384,43 +380,43 @@ async def scan_all(callback: CallbackQuery):
         result = await verifier.scan_all()
 
         await callback.message.edit_text(
-            "✅ <b>انتهى الفحص</b>\n\n"
+            "✅ <b>اكتمل الفحص</b>\n\n"
             f"📦 الإجمالي: <code>{result.total}</code>\n"
-            f"🟢 متاح TCP: <code>{result.alive}</code>\n"
-            f"🔴 غير متاح: <code>{result.dead}</code>\n"
-            f"⏱ متوسط الاستجابة: "
-            f"<code>{result.avg_latency:.0f} ms</code>",
+            f"🟢 صالح: <code>{result.alive}</code>\n"
+            f"🔴 فاشل: <code>{result.dead}</code>\n"
+            f"⚡ HTTP/HTTPS: <code>{result.http_alive}</code>\n"
+            f"🧦 SOCKS4: <code>{result.socks4_alive}</code>\n"
+            f"🧦 SOCKS5: <code>{result.socks5_alive}</code>\n"
+            f"⏱ المتوسط: <code>{result.avg_latency:.0f} ms</code>",
             reply_markup=main_keyboard()
         )
 
-    except Exception as error:
+    except Exception as exc:
+
+        verifier.running = False
 
         await callback.message.edit_text(
             "❌ <b>حدث خطأ أثناء الفحص</b>\n\n"
-            f"<code>{str(error)[:1000]}</code>",
+            f"<code>{str(exc)[:1500]}</code>",
             reply_markup=main_keyboard()
         )
 
-    await callback.answer()
-
 
 # ============================================================
-# LIST
+# RESULTS
 # ============================================================
 
 @dp.callback_query(F.data == "list")
-async def list_proxies(
-    callback: CallbackQuery
-):
+async def results(callback: CallbackQuery):
 
-    if not is_admin(
-        callback.from_user.id
-    ):
+    if not is_admin(callback.from_user.id):
         await callback.answer(
             "غير مصرح",
             show_alert=True
         )
         return
+
+    await callback.answer()
 
     await show_page(
         callback,
@@ -428,16 +424,10 @@ async def list_proxies(
     )
 
 
-# ============================================================
-# PAGINATION
-# ============================================================
-
 @dp.callback_query(F.data.startswith("page:"))
 async def page(callback: CallbackQuery):
 
-    if not is_admin(
-        callback.from_user.id
-    ):
+    if not is_admin(callback.from_user.id):
         await callback.answer(
             "غير مصرح",
             show_alert=True
@@ -445,15 +435,10 @@ async def page(callback: CallbackQuery):
         return
 
     try:
-
-        page_number = int(
+        number = int(
             callback.data.split(":")[1]
         )
-
-    except (
-        ValueError,
-        IndexError
-    ):
+    except Exception:
 
         await callback.answer(
             "صفحة غير صالحة",
@@ -462,17 +447,17 @@ async def page(callback: CallbackQuery):
 
         return
 
+    await callback.answer()
+
     await show_page(
         callback,
-        page_number
+        number
     )
-
-    await callback.answer()
 
 
 async def show_page(
     callback: CallbackQuery,
-    page_number: int
+    number: int
 ):
 
     per_page = 15
@@ -480,45 +465,47 @@ async def show_page(
     total = db.count()
 
     rows = db.page(
-        page_number * per_page,
+        number * per_page,
         per_page
     )
 
     if not rows:
 
         text = (
-            "📋 <b>البروكسيات</b>\n\n"
+            "📋 <b>النتائج</b>\n\n"
             "لا توجد نتائج."
         )
 
     else:
 
         text = (
-            "📋 <b>البروكسيات</b>\n\n"
+            "📋 <b>النتائج</b>\n\n"
             f"📄 الصفحة: "
-            f"<code>{page_number + 1}</code>\n\n"
+            f"<code>{number + 1}</code>\n\n"
         )
 
         for row in rows:
 
-            status = (
-                "🟢"
-                if row["alive"]
-                else "⚪"
-            )
+            if row["alive"]:
+                status = "🟢"
+            else:
+                status = "🔴"
 
             protocol = (
                 row["protocol"]
                 or "unknown"
             )
 
-            latency = row["latency"] or 0
+            latency = (
+                row["latency"]
+                or 0
+            )
 
             text += (
                 f"{status} "
                 f"<code>{row['proxy']}</code>\n"
-                f"   ⚡ {latency} ms"
-                f"  |  {protocol}\n\n"
+                f"   🔌 {protocol}\n"
+                f"   ⚡ {latency} ms\n\n"
             )
 
         pages = max(
@@ -528,15 +515,14 @@ async def show_page(
         )
 
         text += (
-            f"📄 صفحة "
-            f"<code>{page_number + 1}"
-            f"/{pages}</code>"
+            f"📄 "
+            f"<code>{number + 1}/{pages}</code>"
         )
 
     await callback.message.edit_text(
         text,
         reply_markup=page_keyboard(
-            page_number,
+            number,
             total,
             per_page
         )
@@ -550,35 +536,28 @@ async def show_page(
 @dp.callback_query(F.data == "stats")
 async def stats(callback: CallbackQuery):
 
-    if not is_admin(
-        callback.from_user.id
-    ):
+    if not is_admin(callback.from_user.id):
         await callback.answer(
             "غير مصرح",
             show_alert=True
         )
         return
 
-    statistics = db.stats()
+    await callback.answer()
+
+    stats = db.stats()
 
     await callback.message.edit_text(
-        "📊 <b>إحصائيات PROXPMOY</b>\n\n"
-        f"📦 الإجمالي: "
-        f"<code>{statistics['total']}</code>\n"
-        f"🟢 TCP متاح: "
-        f"<code>{statistics['alive']}</code>\n"
-        f"🔴 غير متاح: "
-        f"<code>{statistics['dead']}</code>\n"
-        f"🎯 34.*: "
-        f"<code>{statistics['filtered']}</code>\n"
-        f"🌐 المصادر: "
-        f"<code>{len(sources_from_env())}</code>\n"
+        "📊 <b>الإحصائيات</b>\n\n"
+        f"📦 الإجمالي: <code>{stats['total']}</code>\n"
+        f"🟢 صالح: <code>{stats['alive']}</code>\n"
+        f"🔴 فاشل: <code>{stats['dead']}</code>\n"
+        f"🎯 34.*: <code>{stats['filtered']}</code>\n"
+        f"🌐 المصادر: <code>{len(get_sources_from_env())}</code>\n"
         f"🕒 آخر تحديث: "
-        f"<code>{statistics['last_update'] or '—'}</code>",
+        f"<code>{stats['last_update'] or '—'}</code>",
         reply_markup=main_keyboard()
     )
-
-    await callback.answer()
 
 
 # ============================================================
@@ -588,22 +567,21 @@ async def stats(callback: CallbackQuery):
 @dp.callback_query(F.data == "export")
 async def export(callback: CallbackQuery):
 
-    if not is_admin(
-        callback.from_user.id
-    ):
+    if not is_admin(callback.from_user.id):
         await callback.answer(
             "غير مصرح",
             show_alert=True
         )
         return
 
-    total = db.count()
+    await callback.answer(
+        "📤 تجهيز الملف..."
+    )
 
-    if total == 0:
+    if db.count() == 0:
 
-        await callback.answer(
-            "لا توجد نتائج للتصدير",
-            show_alert=True
+        await callback.message.answer(
+            "⚠️ لا توجد نتائج للتصدير."
         )
 
         return
@@ -616,21 +594,14 @@ async def export(callback: CallbackQuery):
 
         await callback.message.answer_document(
             FSInputFile(path),
-            caption=(
-                "📤 <b>PROXPMOY Export</b>\n\n"
-                f"📦 العدد: <code>{total}</code>"
-            )
+            caption="📤 نتائج PROXPMOY"
         )
 
-        await callback.answer(
-            "تم التصدير"
-        )
+    except Exception as exc:
 
-    except Exception as error:
-
-        await callback.answer(
-            f"خطأ: {str(error)[:150]}",
-            show_alert=True
+        await callback.message.answer(
+            "❌ فشل التصدير:\n\n"
+            f"<code>{str(exc)[:1000]}</code>"
         )
 
 
@@ -641,38 +612,7 @@ async def export(callback: CallbackQuery):
 @dp.callback_query(F.data == "clear")
 async def clear(callback: CallbackQuery):
 
-    if not is_admin(
-        callback.from_user.id
-    ):
-        await callback.answer(
-            "غير مصرح",
-            show_alert=True
-        )
-        return
-
-    db.clear()
-
-    await callback.message.edit_text(
-        "🗑️ <b>تم تنظيف قاعدة البيانات.</b>\n\n"
-        "يمكنك البدء بجمع جديد.",
-        reply_markup=main_keyboard()
-    )
-
-    await callback.answer()
-
-
-# ============================================================
-# UNKNOWN CALLBACK
-# ============================================================
-
-@dp.callback_query()
-async def unknown_callback(
-    callback: CallbackQuery
-):
-
-    if not is_admin(
-        callback.from_user.id
-    ):
+    if not is_admin(callback.from_user.id):
         await callback.answer(
             "غير مصرح",
             show_alert=True
@@ -680,7 +620,14 @@ async def unknown_callback(
         return
 
     await callback.answer(
-        "هذا الزر غير متاح حاليًا."
+        "🗑️ تم التنظيف"
+    )
+
+    db.clear()
+
+    await callback.message.edit_text(
+        "🗑️ <b>تم تنظيف قاعدة البيانات.</b>",
+        reply_markup=main_keyboard()
     )
 
 
@@ -695,24 +642,14 @@ async def main():
         exist_ok=True
     )
 
-    # إنشاء الجداول
     db.init()
 
-    # تحميل المصادر من Railway
     sources = reload_sources()
 
     print(
         f"[PROXPMOY] Loaded "
         f"{len(sources)} proxy sources."
     )
-
-    for index, source in enumerate(
-        sources,
-        start=1
-    ):
-        print(
-            f"[SOURCE {index}] {source}"
-        )
 
     print(
         "[PROXPMOY] Bot starting..."
@@ -724,11 +661,4 @@ async def main():
 
 
 if __name__ == "__main__":
-
-    try:
-        asyncio.run(main())
-
-    except KeyboardInterrupt:
-        print(
-            "[PROXPMOY] Stopped."
-        )
+    asyncio.run(main())
