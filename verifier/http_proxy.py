@@ -5,7 +5,12 @@ import time
 import aiohttp
 
 
-TIMEOUT = float(os.getenv("CHECK_TIMEOUT", "5"))
+TIMEOUT = float(
+    os.getenv(
+        "CHECK_TIMEOUT",
+        "5"
+    )
+)
 
 TEST_URL = os.getenv(
     "PROXY_TEST_URL",
@@ -13,18 +18,13 @@ TEST_URL = os.getenv(
 )
 
 
-async def check_http_proxy(proxy: str):
-    """
-    فحص HTTP Proxy فعلي.
+async def check_http_proxy(
+    proxy: str
+):
 
-    proxy:
-        34.x.x.x:PORT
-
-    النتيجة:
-        (alive, latency)
-    """
-
-    proxy_url = f"http://{proxy}"
+    proxy_url = (
+        f"http://{proxy}"
+    )
 
     started = time.perf_counter()
 
@@ -35,12 +35,12 @@ async def check_http_proxy(proxy: str):
         sock_read=TIMEOUT
     )
 
-    try:
+    connector = aiohttp.TCPConnector(
+        ssl=False,
+        limit=1
+    )
 
-        connector = aiohttp.TCPConnector(
-            ssl=False,
-            limit=1
-        )
+    try:
 
         async with aiohttp.ClientSession(
             connector=connector,
@@ -53,20 +53,23 @@ async def check_http_proxy(proxy: str):
                 proxy=proxy_url,
                 allow_redirects=False,
                 headers={
-                    "User-Agent": "PROXPMOY-Checker/3.0"
+                    "User-Agent": "PROXPMOY/4.0"
                 }
             ) as response:
 
-                # نحتاج فقط إلى استجابة HTTP حقيقية
-                # من خلال البروكسي.
-                await response.read(1024)
+                await response.read(
+                    2048
+                )
 
                 latency = round(
-                    (time.perf_counter() - started)
-                    * 1000
+                    (
+                        time.perf_counter()
+                        - started
+                    ) * 1000
                 )
 
                 if 100 <= response.status < 600:
+
                     return True, latency
 
                 return False, latency
@@ -77,7 +80,9 @@ async def check_http_proxy(proxy: str):
         OSError,
         ConnectionError
     ):
+
         return False, 0
 
     except Exception:
+
         return False, 0
