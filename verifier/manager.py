@@ -1,9 +1,8 @@
 import asyncio
-import time
 from dataclasses import dataclass
 
-from verifier.tcp import check_tcp
 from database.db import Database
+from verifier.http_proxy import check_http_proxy
 
 
 @dataclass
@@ -31,43 +30,42 @@ class VerifierManager:
                 avg_latency=0
             )
 
-        semaphore = asyncio.Semaphore(100)
+        # لا نفتح آلاف الاتصالات دفعة واحدة.
+        semaphore = asyncio.Semaphore(50)
 
         async def worker(row):
 
+            proxy = row["proxy"]
+
             async with semaphore:
 
-                host, port = row["proxy"].rsplit(
-                    ":",
-                    1
-                )
-
-                start = time.perf_counter()
-
-                alive = await check_tcp(
-                    host,
-                    int(port)
-                )
-
-                latency = (
-                    (time.perf_counter() - start)
-                    * 1000
+                alive, latency = (
+                    await check_http_proxy(proxy)
                 )
 
                 return (
-                    row["proxy"],
+                    proxy,
                     alive,
-                    round(latency)
+                    latency
                 )
 
         results = await asyncio.gather(
-            *(worker(row) for row in rows)
+            *[
+                worker(row)
+                for row in rows
+            ],
+            return_exceptions=True
         )
 
         alive_count = 0
         latencies = []
 
-        for proxy, alive, latency in results:
+        for result in results:
+
+            if isinstance(result, Exception):
+                continue
+
+            proxy, alive, latency = result
 
             self.db.update_check(
                 proxy,
@@ -77,7 +75,9 @@ class VerifierManager:
 
             if alive:
                 alive_count += 1
-                latencies.append(latency)
+
+                if latency > 0:
+                    latencies.append(latency)
 
         average = (
             sum(latencies) / len(latencies)
@@ -86,8 +86,8 @@ class VerifierManager:
         )
 
         return ScanResult(
-            total=len(results),
+            total=len(rows),
             alive=alive_count,
-            dead=len(results) - alive_count,
+            dead=len(rows) - alive_count,
             avg_latency=average
         )
