@@ -1,19 +1,25 @@
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import (
+    InlineKeyboardMarkup,
+    InlineKeyboardButton,
+)
 
 
 def main_keyboard():
+
     return InlineKeyboardMarkup(
         inline_keyboard=[
+
             [
                 InlineKeyboardButton(
                     text="🔎 جمع البروكسيات",
                     callback_data="collect"
                 ),
                 InlineKeyboardButton(
-                    text="⚡ الفحص",
+                    text="⚡ فحص",
                     callback_data="scan"
                 )
             ],
+
             [
                 InlineKeyboardButton(
                     text="📋 النتائج",
@@ -24,6 +30,7 @@ def main_keyboard():
                     callback_data="stats"
                 )
             ],
+
             [
                 InlineKeyboardButton(
                     text="🌐 المصادر",
@@ -34,6 +41,7 @@ def main_keyboard():
                     callback_data="export"
                 )
             ],
+
             [
                 InlineKeyboardButton(
                     text="🗑️ تنظيف",
@@ -45,14 +53,17 @@ def main_keyboard():
 
 
 def sources_keyboard():
+
     return InlineKeyboardMarkup(
         inline_keyboard=[
+
             [
                 InlineKeyboardButton(
-                    text="🔄 جمع الآن",
+                    text="🔎 جمع الآن",
                     callback_data="collect"
                 )
             ],
+
             [
                 InlineKeyboardButton(
                     text="◀️ الرئيسية",
@@ -64,14 +75,17 @@ def sources_keyboard():
 
 
 def scan_keyboard():
+
     return InlineKeyboardMarkup(
         inline_keyboard=[
+
             [
                 InlineKeyboardButton(
                     text="⚡ فحص الكل",
                     callback_data="scan_all"
                 )
             ],
+
             [
                 InlineKeyboardButton(
                     text="◀️ الرئيسية",
@@ -82,15 +96,24 @@ def scan_keyboard():
     )
 
 
-def page_keyboard(page, total, per_page):
+def page_keyboard(
+    page: int,
+    total: int,
+    per_page: int
+):
+
     pages = max(
         1,
-        (total + per_page - 1) // per_page
+        (total + per_page - 1)
+        // per_page
     )
+
+    rows = []
 
     buttons = []
 
     if page > 0:
+
         buttons.append(
             InlineKeyboardButton(
                 text="⬅️ السابق",
@@ -99,6 +122,7 @@ def page_keyboard(page, total, per_page):
         )
 
     if page + 1 < pages:
+
         buttons.append(
             InlineKeyboardButton(
                 text="التالي ➡️",
@@ -106,17 +130,17 @@ def page_keyboard(page, total, per_page):
             )
         )
 
-    rows = []
-
     if buttons:
         rows.append(buttons)
 
-    rows.append([
-        InlineKeyboardButton(
-            text="◀️ الرئيسية",
-            callback_data="menu"
-        )
-    ])
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text="◀️ الرئيسية",
+                callback_data="menu"
+            )
+        ]
+    )
 
     return InlineKeyboardMarkup(
         inline_keyboard=rows
