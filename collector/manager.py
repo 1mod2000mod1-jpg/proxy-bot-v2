@@ -1,14 +1,14 @@
 import asyncio
 from dataclasses import dataclass
 
-from collector.sources import fetch_source
 from collector.parser import extract_proxies
-
+from collector.sources import fetch_source
 from database.db import Database
 
 
 @dataclass
 class CollectResult:
+
     discovered: int
     new: int
     duplicates: int
@@ -17,14 +17,21 @@ class CollectResult:
 
 class CollectorManager:
 
-    def __init__(self, db: Database):
+    def __init__(
+        self,
+        db: Database
+    ):
+
         self.db = db
 
-    async def collect(self) -> CollectResult:
+    async def collect(
+        self
+    ):
 
         sources = self.db.sources()
 
         if not sources:
+
             return CollectResult(
                 discovered=0,
                 new=0,
@@ -32,58 +39,89 @@ class CollectorManager:
                 failed_sources=0
             )
 
-        semaphore = asyncio.Semaphore(10)
+        semaphore = asyncio.Semaphore(
+            15
+        )
 
-        async def worker(url):
+        async def fetch(url):
+
             async with semaphore:
-                return await asyncio.to_thread(
-                    fetch_source,
+
+                try:
+
+                    text = await asyncio.to_thread(
+                        fetch_source,
+                        url
+                    )
+
+                    return (
+                        url,
+                        text,
+                        None
+                    )
+
+                except Exception as exc:
+
+                    return (
+                        url,
+                        None,
+                        exc
+                    )
+
+        results = await asyncio.gather(
+            *[
+                fetch(url)
+                for url in sources
+            ]
+        )
+
+        all_items = set()
+
+        failed = 0
+
+        for url, text, error in results:
+
+            if error or text is None:
+
+                failed += 1
+                continue
+
+            try:
+
+                items = extract_proxies(
+                    text,
                     url
                 )
 
-        results = await asyncio.gather(
-            *(worker(url) for url in sources),
-            return_exceptions=True
-        )
+                all_items.update(
+                    items
+                )
 
-        all_proxies = set()
-        failed = 0
+            except Exception:
 
-        for result in results:
-
-            if isinstance(result, Exception):
                 failed += 1
-                continue
-
-            if not result:
-                failed += 1
-                continue
-
-            all_proxies.update(
-                extract_proxies(result)
-            )
 
         before = self.db.count()
 
         self.db.add_many(
-            sorted(all_proxies)
+            sorted(all_items)
         )
 
         after = self.db.count()
 
-        new = max(
+        inserted = max(
             0,
             after - before
         )
 
         duplicates = max(
             0,
-            len(all_proxies) - new
+            len(all_items) - inserted
         )
 
         return CollectResult(
-            discovered=len(all_proxies),
-            new=new,
+            discovered=len(all_items),
+            new=inserted,
             duplicates=duplicates,
             failed_sources=failed
         )
