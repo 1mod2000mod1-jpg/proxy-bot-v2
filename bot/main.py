@@ -280,8 +280,8 @@ async def collect(callback: CallbackQuery):
         )
 
         await callback.message.edit_text(
-            "✅ <b>انتهى الجمع</b>\n\n"
-            f"🌐 المصادر: <code>{len(sources)}</code>\n"
+            "🔺 <b>انتهى الجمع</b>\n\n"
+            f"🤍 المصادر: <code>{len(sources)}</code>\n"
             f"📥 المكتشف: <code>{result.discovered}</code>\n"
             f"🆕 الجديد: <code>{result.new}</code>\n"
             f"♻️ المكرر: <code>{result.duplicates}</code>\n"
