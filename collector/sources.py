@@ -3,16 +3,17 @@ import urllib.request
 
 USER_AGENT = (
     "Mozilla/5.0 "
-    "PROXPMOY/3.0"
+    "PROXPMOY/4.0"
 )
 
 
-def fetch_source(url: str) -> str:
+def fetch_source(url: str):
 
     request = urllib.request.Request(
         url,
         headers={
-            "User-Agent": USER_AGENT
+            "User-Agent": USER_AGENT,
+            "Accept": "text/plain,text/*,*/*;q=0.8",
         }
     )
 
@@ -22,7 +23,7 @@ def fetch_source(url: str) -> str:
     ) as response:
 
         data = response.read(
-            5 * 1024 * 1024
+            10 * 1024 * 1024
         )
 
         return data.decode(
